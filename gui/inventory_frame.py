@@ -18,10 +18,8 @@ class InventoryFrame(ctk.CTkFrame):
         self.name_entry = ctk.CTkEntry(self, placeholder_text="Product Name")
         self.name_entry.grid(row=2, column=0, columnspan=2, padx=20, pady=5, sticky="ew")
 
-        # --- MODIFIED: Changed placeholder for BDT ---
         self.price_entry = ctk.CTkEntry(self, placeholder_text="Price (e.g., 1200)")
         self.price_entry.grid(row=3, column=0, padx=(20, 5), pady=5, sticky="ew")
-        # --- END MODIFICATION ---
 
         self.stock_entry = ctk.CTkEntry(self, placeholder_text="Initial Stock (e.g., 100)")
         self.stock_entry.grid(row=3, column=1, padx=(5, 20), pady=5, sticky="ew")
@@ -38,6 +36,7 @@ class InventoryFrame(ctk.CTkFrame):
         self.status_label = ctk.CTkLabel(self, text="", text_color="green")
         self.status_label.grid(row=6, column=0, columnspan=2, padx=20, pady=5)
 
+    # --- THIS FUNCTION IS MODIFIED ---
     def add_product_callback(self):
         name = self.name_entry.get()
         price_str = self.price_entry.get()
@@ -45,9 +44,15 @@ class InventoryFrame(ctk.CTkFrame):
         category = self.category_entry.get()
         supplier = self.supplier_entry.get()
 
-        if not all([name, price_str, stock_str, category, supplier]):
-            self.status_label.configure(text="All fields are required.", text_color="red")
+        if not all([name, price_str, stock_str, supplier]):
+            self.status_label.configure(text="All fields (except Category) are required.", text_color="red")
             return
+            
+        # --- NEW VALIDATION ---
+        if not category or category.isspace():
+            self.status_label.configure(text="Category field cannot be blank.", text_color="red")
+            return
+        # --- END OF NEW VALIDATION ---
 
         try:
             price = float(price_str)
@@ -57,6 +62,7 @@ class InventoryFrame(ctk.CTkFrame):
             return
 
         try:
+            # This 'add_product' function is from the inventory_db.py file
             product_id = inventory_db.add_product(name, price, category, supplier, stock)
             
             self.status_label.configure(text=f"Success! Added '{name}' (ID: {product_id})", text_color="green")

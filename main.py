@@ -1,17 +1,18 @@
 from gui.app import App
 from database.db_connector import db_connection
-# We no longer need to import sales_db here
 
 if __name__ == "__main__":
-    # First, check if the database connection was successful
+    # This checks if the db_connection was successful
     if db_connection:
         
-        # --- THIS LINE IS NOW REMOVED (it caused your crash) ---
-        # sales_db.setup_temporary_fragments() 
-        
-        # --- RUN THE APP ---
+        # --- THESE ARE THE MISSING LINES ---
+        # This creates the application window
         app = App()
+        
+        # This tells the window to open and wait for user input
         app.mainloop()
+        # --- END OF MISSING LINES ---
+        
     else:
         # If db_connector.py failed, don't start the app.
         print("Application cannot start: Failed to connect to database.")

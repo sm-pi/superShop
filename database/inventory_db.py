@@ -24,7 +24,6 @@ def _ensure_temp_fragment_ttl():
     global _temp_index_created
     if _temp_index_created:
         return # Don't run this more than once
-
     try:
         SECONDS_TO_LIVE = 300 # 5 minutes
         temp_fragment_coll.create_index(
@@ -77,10 +76,7 @@ def create_product_fragment(filters={}):
         # Only add if stock is found and quantity is greater than 0
         if stock_item and stock_item.get("quantity", 0) > 0:
             fragment_doc = {
-                # --- THIS IS THE CRITICAL FIX ---
-                # We are copying the ORIGINAL _id from the product
-                "_id": product["_id"], 
-                # --- END OF FIX ---
+                "_id": product["_id"], # Copy the ORIGINAL product ID
                 "name": product["name"],
                 "price": product["price"],
                 "category": product["category"],
@@ -96,8 +92,6 @@ def create_product_fragment(filters={}):
     # 6. Insert the new results
     if fragment_docs:
         print(f"Inserting {len(fragment_docs)} new docs into 'FragementedData'...")
-        # Because we provided an '_id' in fragment_doc,
-        # insert_many will use the ORIGINAL product ID.
         temp_fragment_coll.insert_many(fragment_docs)
     
     # 7. Return the product list to the GUI
@@ -109,23 +103,41 @@ def get_product_by_name(name):
 
 # --- This function is still needed by inventory_frame.py ---
 def add_product(name, price, category, supplier_name, initial_stock):
+    """
+    Adds a new product to the permanent inventory collections.
+    This implements Vertical Fragmentation (products + stock).
+    """
     supplier = suppliers_coll.find_one_and_update(
         {"name": supplier_name},
         {"$setOnInsert": {"name": supplier_name, "contact_email": "default@supplier.com"}},
         upsert=True,
         return_document=pymongo.ReturnDocument.AFTER
     )
+    
+    # --- FIX: Clean the category name before saving ---
+    clean_category = "Uncategorized" # Default
+    if category and not category.isspace():
+        clean_category = category.strip()
+    # --- END OF FIX ---
+
+    # 1. Add to 'products' collection
     product_doc = {
-        "name": name, "price": price, "category": category,
-        "supplier_id": supplier["_id"], "created_at": datetime.utcnow()
+        "name": name, 
+        "price": price, 
+        "category": clean_category, # <-- Use the clean name
+        "supplier_id": supplier["_id"], 
+        "created_at": datetime.utcnow()
     }
     result = products_coll.insert_one(product_doc)
     product_id = result.inserted_id
+    
+    # 2. Add to 'stock' collection
     stock_doc = {
         "product_id": product_id, "product_name": name, 
         "quantity": initial_stock, "location": "main_warehouse",
         "last_updated": datetime.utcnow()
     }
     stock_coll.insert_one(stock_doc)
+    
     print(f"Added product '{name}' (ID: {product_id}) with stock {initial_stock}")
     return str(product_id)

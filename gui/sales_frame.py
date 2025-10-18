@@ -165,9 +165,7 @@ class SalesFrame(ctk.CTkFrame):
             
         self.update_cart_ui()
 
-    # --- THIS FUNCTION IS MODIFIED ---
     def add_to_cart_callback(self, product):
-        # We now store the name from the fragment, in addition to the _id
         product_id_str = str(product["_id"])
         
         for item in self.cart:
@@ -184,7 +182,6 @@ class SalesFrame(ctk.CTkFrame):
         }
         self.cart.append(cart_item)
         self.update_cart_ui()
-    # --- END MODIFICATION ---
         
     def update_cart_ui(self):
         """
@@ -218,7 +215,6 @@ class SalesFrame(ctk.CTkFrame):
 
         self.total_label.configure(text=f"Total: {final_total:.2f} BDT")
 
-    # --- THIS FUNCTION IS MODIFIED ---
     def process_sale_callback(self):
         self.status_label.configure(text="Processing...", text_color="orange")
         self.update_idletasks()
@@ -235,8 +231,7 @@ class SalesFrame(ctk.CTkFrame):
         if self.member_found and subtotal >= self.DISCOUNT_THRESHOLD:
             discount_applied = subtotal * self.DISCOUNT_PERCENT
             
-        # --- MODIFIED: Pass the name from the cart for lookup ---
-        # This is the key part of the fix
+        # --- Pass the name from the cart for reliable lookup ---
         items_sold_db = [
             {
              "quantity": item["quantity"],
@@ -244,7 +239,6 @@ class SalesFrame(ctk.CTkFrame):
             } 
             for item in self.cart
         ]
-        # --- END MODIFICATION ---
 
         try:
             transaction_id = sales_db.record_sale(member_id, items_sold_db, discount_applied)
