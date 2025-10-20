@@ -19,11 +19,11 @@ _temp_index_created = False # Cache
 
 def _ensure_temp_fragment_ttl():
     global _temp_index_created
-    if _temp_index_created: return 
+    if _temp_index_created: return
     try:
         SECONDS_TO_LIVE = 300 # 5 minutes
         temp_fragment_coll.create_index(
-            [("createdAt", pymongo.ASCENDING)], 
+            [("createdAt", pymongo.ASCENDING)],
             expireAfterSeconds=SECONDS_TO_LIVE
         )
         print(f"Ensured TTL index on 'FragementedData'. Data expires in 300s.")
@@ -31,30 +31,67 @@ def _ensure_temp_fragment_ttl():
     except Exception as e:
         print(f"Error creating TTL index: {e}")
 
-# --- THIS FUNCTION IS REWRITTEN ---
+# --- THIS FUNCTION IS MODIFIED ---
 def create_product_fragment(filters={}):
     """
     This is the new fragmentation function.
     It uses an aggregation pipeline to efficiently join products,
     stock, and suppliers, and saves the result to 'FragementedData'.
+    
+    IT NOW FIXES THE SYNTAX ERROR.
     """
     _ensure_temp_fragment_ttl()
-    
-    # 1. Build the filter for the 'products' collection
+
+    # 1. Build the initial filter (for non-price fields)
     match_query = {}
     if filters.get("name"):
         match_query["name"] = {"$regex": filters["name"], "$options": "i"}
     if filters.get("category"):
         match_query["category"] = {"$regex": f"^{filters['category']}$", "$options": "i"}
-    price_query = {}
-    if filters.get("min_price"): price_query["$gte"] = filters["min_price"]
-    if filters.get("max_price"): price_query["$lte"] = filters["max_price"]
-    if price_query: match_query["price"] = price_query
 
-    # 2. Build the aggregation pipeline
+    # 2. Build the price filter (for numeric matching)
+    price_match_query = {}
+    if filters.get("min_price"):
+        price_match_query["$gte"] = filters["min_price"]
+    if filters.get("max_price"):
+        price_match_query["$lte"] = filters["max_price"]
+
+    # 3. Build the aggregation pipeline
     pipeline = [
+        # Stage 1: Match on name and category first
         {"$match": match_query},
-        # Join with stock collection
+
+        # --- THIS IS THE FIX ---
+        # Stage 2: Convert price field to a number, just in case
+        # The keys "if", "then", and "else" MUST be strings.
+        {
+            "$addFields": {
+                "numericPrice": {
+                    "$cond": {
+                        "if": {"$isNumber": "$price"},
+                        "then": "$price",
+                        "else": {
+                             "$convert": {
+                                 "input": "$price",
+                                 "to": "double",
+                                 "onError": 0, # Default to 0 if conversion fails
+                                 "onNull": 0   # Default to 0 if null
+                             }
+                        }
+                    }
+                }
+            }
+        },
+        # --- END OF FIX ---
+    ]
+
+    # Stage 3: Conditionally add the price match stage
+    # Now it filters on the new 'numericPrice' field
+    if price_match_query:
+        pipeline.append({"$match": {"numericPrice": price_match_query}})
+
+    # Stage 4: Continue with the rest of the original pipeline
+    pipeline.extend([
         {
             "$lookup": {
                 "from": "stock",
@@ -63,9 +100,8 @@ def create_product_fragment(filters={}):
                 "as": "stock_data"
             }
         },
-        {"$unwind": "$stock_data"}, # Deconstruct the stock_data array
-        {"$match": {"stock_data.quantity": {"$gt": 0}}}, # Filter for in-stock
-        # Join with suppliers collection
+        {"$unwind": "$stock_data"},
+        {"$match": {"stock_data.quantity": {"$gt": 0}}},
         {
             "$lookup": {
                 "from": "suppliers",
@@ -75,36 +111,35 @@ def create_product_fragment(filters={}):
             }
         },
         {"$unwind": {"path": "$supplier_data", "preserveNullAndEmptyArrays": True}},
-        # Shape the final document for the fragment
         {
             "$project": {
-                "_id": 1, # Use the ORIGINAL product ID
+                "_id": 1,
                 "name": 1,
-                "price": 1,
+                "price": "$numericPrice", # Use the converted price
                 "category": 1,
                 "quantity_in_stock": "$stock_data.quantity",
                 "supplier_name": {"$ifNull": ["$supplier_data.name", "N/A"]},
-                "createdAt": datetime.now(timezone.utc) # TTL field
+                "createdAt": datetime.now(timezone.utc)
             }
         }
-    ]
-    
-    # 3. Run the pipeline
+    ])
+
+    # 4. Run the pipeline
     try:
         fragment_docs = list(products_coll.aggregate(pipeline))
     except Exception as e:
         print(f"Error in aggregation pipeline: {e}")
         return []
-        
-    # 4. Clear and insert into the temporary fragment
+
+    # 5. Clear and insert into the temporary fragment
     print("Clearing old data from 'FragementedData'...")
     temp_fragment_coll.delete_many({})
     if fragment_docs:
         print(f"Inserting {len(fragment_docs)} new docs into 'FragementedData'...")
         temp_fragment_coll.insert_many(fragment_docs)
-    
+
     return fragment_docs
-# --- END REWRITE ---
+# --- END MODIFICATION ---
 
 def get_product_by_name_and_supplier(name, supplier_id):
     """Finds a product by its name and supplier ID."""
@@ -114,7 +149,7 @@ def get_product_by_name_and_supplier(name, supplier_id):
     })
 
 def add_product(name, price, category, supplier_name, initial_stock):
-    
+
     # 1. Find or create supplier
     supplier = suppliers_coll.find_one_and_update(
         {"name": {"$regex": f"^{supplier_name}$", "$options": "i"}},
@@ -131,23 +166,23 @@ def add_product(name, price, category, supplier_name, initial_stock):
         return None # Return None to signal failure
 
     # 3. Add to 'products' collection
-    clean_category = "Uncategorized" 
+    clean_category = "Uncategorized"
     if category and not category.isspace():
         clean_category = category.strip()
 
     product_doc = {
-        "name": name, 
-        "price": price, 
-        "category": clean_category, 
+        "name": name,
+        "price": price, # Price is saved correctly as a float from the GUI
+        "category": clean_category,
         "supplier_id": supplier_id, # Link to supplier
         "created_at": datetime.utcnow()
     }
     result = products_coll.insert_one(product_doc)
     product_id = result.inserted_id
-    
+
     # 4. Add to 'stock' collection
     stock_doc = {
-        "product_id": product_id, "product_name": name, 
+        "product_id": product_id, "product_name": name,
         "quantity": initial_stock, "location": "main_warehouse",
         "last_updated": datetime.utcnow()
     }
@@ -155,7 +190,6 @@ def add_product(name, price, category, supplier_name, initial_stock):
     print(f"Added product '{name}' (ID: {product_id}) with stock {initial_stock}")
     return str(product_id)
 
-# --- THIS FUNCTION IS MODIFIED ---
 def add_stock_to_product(product_name, supplier_name, amount_to_add):
     """
     Finds a product by name AND supplier, then adds to its stock.
@@ -164,8 +198,8 @@ def add_stock_to_product(product_name, supplier_name, amount_to_add):
     supplier = suppliers_coll.find_one({"name": {"$regex": f"^{supplier_name}$", "$options": "i"}})
     if not supplier:
         print(f"Error: Supplier '{supplier_name}' not found.")
-        return None 
-    
+        return None
+
     # 2. Find the product by name AND supplier_id
     product = get_product_by_name_and_supplier(product_name, supplier["_id"])
     if not product:
@@ -181,5 +215,5 @@ def add_stock_to_product(product_name, supplier_name, amount_to_add):
         },
         return_document=pymongo.ReturnDocument.AFTER
     )
-    
+
     return update_result
