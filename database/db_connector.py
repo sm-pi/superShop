@@ -1,60 +1,75 @@
 import pymongo
-import os
 from dotenv import load_dotenv
+import os
 
-# Load environment variables from .env file
-load_dotenv()
+class DBConnection:
+    def __init__(self):
+        load_dotenv()
+        # --- IMPORTANT: Ensure .env uses MONGODB_CONNECTION_STRING ---
+        self.connection_string = os.getenv("MONGODB_CONNECTION_STRING")
+        if not self.connection_string:
+            raise ValueError("MONGODB_CONNECTION_STRING not found in .env file")
+        self.client = None
+        self.connect()
 
-class DBConnector:
-    _instance = None
+    def connect(self):
+        try:
+            self.client = pymongo.MongoClient(self.connection_string)
+            # The ismaster command is cheap and does not require auth.
+            self.client.admin.command('ismaster')
+            print("Successfully connected to MongoDB.")
+            # We list DBs later, after potentially creating them
+        except pymongo.errors.ConnectionFailure as e:
+            print(f"FATAL: Could not connect to MongoDB: {e}")
+            self.client = None
+        except ValueError as e:
+             print(f"FATAL: Configuration error: {e}")
+             self.client = None
+        except Exception as e:
+            print(f"An unexpected error occurred during connection: {e}")
+            self.client = None
 
-    def __new__(cls):
-        """
-        Singleton pattern: Ensures only one instance of DBConnector is created.
-        """
-        if cls._instance is None:
-            cls._instance = super(DBConnector, cls).__new__(cls)
+
+    def list_databases(self):
+        if self.client:
             try:
-                mongo_uri = os.getenv("MONGO_URI")
-                if not mongo_uri:
-                    raise ValueError("MONGO_URI not found in .env file")
-                
-                # Establish the connection
-                cls._instance.client = pymongo.MongoClient(mongo_uri)
-                
-                # --- Access your 3 specific databases ---
-                cls._instance.db_inventory = cls._instance.client["ShopInventory"]
-                cls._instance.db_sales = cls._instance.client["ShopSales"]
-                cls._instance.db_member = cls._instance.client["Shopmember"]
-                
-                print("Successfully connected to MongoDB.")
-                print(f"Available databases: {cls._instance.client.list_database_names()}")
-
-            except pymongo.errors.ConnectionFailure as e:
-                print(f"FATAL: Could not connect to MongoDB: {e}")
-                cls._instance = None
-            except ValueError as e:
-                print(f"FATAL: Configuration error: {e}")
-                cls._instance = None
-        return cls._instance
-
-    def get_inventory_db(self):
-        """Returns the handle to the ShopInventory database."""
-        return self.db_inventory
-
-    def get_sales_db(self):
-        """Returns the handle to the ShopSales database."""
-        return self.db_sales
-
-    def get_member_db(self):
-        """Returns the handle to the Shopmember database."""
-        return self.db_member
+                print(f"Available databases: {self.client.list_database_names()}")
+            except Exception as e:
+                print(f"Could not list databases (permissions?): {e}")
 
     def close_connection(self):
-        """Closes the MongoDB connection."""
-        if hasattr(self, 'client') and self.client:
+        if self.client:
             self.client.close()
             print("MongoDB connection closed.")
 
-# --- Create a single, importable instance for the whole app ---
-db_connection = DBConnector()
+    # --- MODIFIED FUNCTION ---
+    def get_inventory_shard(self, shard_id):
+        """
+        Connects to a specific inventory shard database (DB1, DB2, DB3).
+        shard_id should be 0, 1, or 2.
+        """
+        if self.client:
+            # Map shard_id (0, 1, 2) to DB name (DB1, DB2, DB3)
+            db_name = f"DB{shard_id + 1}"
+            return self.client[db_name]
+        return None
+    # --- END MODIFICATION ---
+
+    def get_sales_db(self):
+        if self.client:
+            return self.client["ShopSales"]
+        return None
+
+    def get_member_db(self):
+        if self.client:
+            return self.client["Shopmember"]
+        return None
+
+# Create a single instance, check connection after creation
+db_connection = DBConnection()
+if db_connection.client:
+    db_connection.list_databases() # List DBs now
+else:
+    # If connection failed in __init__, exit or handle appropriately
+    print("Exiting application due to database connection failure.")
+    exit() # Or raise an exception
