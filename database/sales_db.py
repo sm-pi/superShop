@@ -1,81 +1,93 @@
 from .db_connector import db_connection
-# No longer need to import inventory_db directly for collections
 from datetime import datetime, timezone
 from bson.objectid import ObjectId
 import pymongo
 import re
 
-# Get database handles for central DBs
-db_sales = db_connection.get_sales_db()
+# Get database handles for CENTRAL DBs
+db_sales = db_connection.get_sales_db() # For analytics
 if db_sales is None: raise ConnectionError("Fatal: Could not connect to ShopSales database")
 db_member = db_connection.get_member_db()
-if db_member is None: raise ConnectionError("Fatal: Could not connect to Shopmember database")
-
+# FIX: Check if member DB connection failed
+if db_member is None: 
+    print("Warning: Could not connect to Shopmember database. Member features disabled.")
+    # No need to raise an error, just means member features won't work
 
 # --- PERMANENT FRAGMENTATION ---
-transactions_coll = db_sales["transactions"]
-sold_items_coll = db_sales["Sold_Items"] # Central aggregated collection
+# This collection is in the CENTRAL 'ShopSales' DB for analytics
+sold_items_coll = db_sales["Sold_Items"]
+# 'transactions_coll' is now dynamic and lives on the inventory shards
 
 
 def record_sale(member_id, items_sold, discount_applied=0):
     """
     Processes a sale as an ATOMIC TRANSACTION.
-    1. Writes receipt to central 'transactions'.
-    2. Updates stock on the correct inventory SHARD DB.
-    3. Updates central aggregated 'Sold_Items'.
+    1. Writes receipt to the correct DISTRIBUTED 'DBX' (inventory shard).
+    2. Updates stock on the correct DISTRIBUTED 'DBX' inventory shard.
+    3. Updates the CENTRAL 'Sold_Items' analytics collection.
     """
 
     client = db_connection.client
-    if not client: raise ConnectionError("Fatal: MongoDB client not available")
+    # --- FIX: Check with 'is not None' ---
+    if client is None:
+        raise ConnectionError("Fatal: MongoDB client not available")
+
+    if not items_sold:
+        raise ValueError("Cannot record a sale with no items.")
+        
+    # The transaction will live on the shard of the *first item*
+    primary_shard_id = items_sold[0]["shard_id"]
+    
+    # Connect to the INVENTORY SHARD (e.g., DB1, DB2, or DB3)
+    db_inventory_shard_for_sale = db_connection.get_inventory_shard(primary_shard_id)
+    # --- FIX: Check with 'is not None' ---
+    if db_inventory_shard_for_sale is None:
+        raise ConnectionError(f"Could not connect to Sales Shard DB{primary_shard_id + 1}")
+        
+    # Get the 'transactions' collection *from that inventory shard*
+    transactions_coll = db_inventory_shard_for_sale["transactions"]
 
     with client.start_session() as session:
         with session.start_transaction():
             try:
                 subtotal = 0
-                permanent_item_docs = [] # For the central 'transactions' receipt
+                permanent_item_docs = [] # For the sharded 'transactions' receipt
 
                 for item in items_sold:
                     quantity_sold = item["quantity"]
                     product_id_obj = ObjectId(item["product_id"])
-                    shard_id = item["shard_id"] # Get shard_id from cart item
+                    inventory_shard_id = item["shard_id"] # The shard for *this item's* stock
 
-                    # 1. Connect to the correct inventory shard DB
-                    db_shard = db_connection.get_inventory_shard(shard_id)
-                    if not db_shard:
-                        raise ConnectionError(f"Could not connect to Shard DB{shard_id + 1} during transaction.")
-                    shard_products_coll = db_shard["products"]
-                    shard_stock_coll = db_shard["stock"]
+                    # 1. Connect to the correct INVENTORY shard DB for *this item*
+                    db_inventory_shard_for_item = db_connection.get_inventory_shard(inventory_shard_id)
+                    # --- FIX: Check with 'is not None' ---
+                    if db_inventory_shard_for_item is None:
+                        raise ConnectionError(f"Could not connect to Inventory Shard DB{inventory_shard_id + 1}")
+                    shard_products_coll = db_inventory_shard_for_item["products"]
+                    shard_stock_coll = db_inventory_shard_for_item["stock"]
 
-                    # 2. Find the product *on that specific shard*
+                    # 2. Find the product *on its specific inventory shard*
                     product = shard_products_coll.find_one(
                         {"_id": product_id_obj},
                         session=session
                     )
                     if not product:
-                        raise ValueError(f"Product ID {product_id_obj} not found on Shard DB{shard_id + 1}.")
+                        raise ValueError(f"Product ID {product_id_obj} not found on Shard DB{inventory_shard_id + 1}.")
 
                     price = product["price"]
-                    # Ensure category exists, default to Uncategorized
-                    category = product.get("category")
-                    if not category or category.isspace():
-                        category = "Uncategorized"
-                    else:
-                        category = category.strip()
-
+                    category = product.get("category", "Uncategorized").strip() or "Uncategorized"
                     subtotal += price * quantity_sold
 
-                    # 3. Update stock *on that specific shard's stock collection*
+                    # 3. Update stock *on its specific inventory shard*
                     stock_update_result = shard_stock_coll.update_one(
                         {"product_id": product_id_obj, "quantity": {"$gte": quantity_sold}},
                         {"$inc": {"quantity": -quantity_sold}, "$set": {"last_updated": datetime.now(timezone.utc)}},
                         session=session
                     )
                     if stock_update_result.matched_count == 0:
-                        # This should be rare now with scatter-gather, but keep as safety
-                        raise ValueError(f"Out of stock for product: {product['name']} on Shard DB{shard_id + 1}.")
+                        raise ValueError(f"Out of stock for product: {product['name']} on Shard DB{inventory_shard_id + 1}.")
 
                     # 4. --- UPDATE CENTRAL 'Sold_Items' AGGREGATED FRAGMENT ---
-                    # Uses the cleaned category name
                     update_result = sold_items_coll.update_one(
                         {"category": category, "products_sold.name": product["name"]},
                         {"$inc": { "Total_Sold_in_Category": quantity_sold, "products_sold.$.quantity_sold": quantity_sold }},
@@ -91,10 +103,10 @@ def record_sale(member_id, items_sold, discount_applied=0):
                             upsert=True, session=session
                         )
 
-                    # 5. Prepare the item doc for the permanent 'transactions' receipt
+                    # 5. Prepare the item doc for the transaction receipt
                     item_doc = {
                         "product_id": product_id_obj,
-                        "shard_id": shard_id, # Store shard_id for auditing
+                        "inventory_shard_id": inventory_shard_id,
                         "name": product["name"],
                         "category": category,
                         "price_at_sale": price,
@@ -105,9 +117,9 @@ def record_sale(member_id, items_sold, discount_applied=0):
                 # --- Step 6: Calculate final total ---
                 final_total = subtotal - discount_applied
 
-                # --- Step 7: Build the final, single transaction document ---
+                # --- Step 7: Build the final transaction document ---
                 transaction_doc = {
-                    "_id": ObjectId(), # Generate ID manually for consistency
+                    "_id": ObjectId(),
                     "timestamp": datetime.now(timezone.utc),
                     "subtotal": subtotal,
                     "discount_applied": discount_applied,
@@ -117,12 +129,14 @@ def record_sale(member_id, items_sold, discount_applied=0):
                     "items": permanent_item_docs
                 }
 
-                # --- Step 8: Insert the permanent transaction into central ShopSales ---
+                # --- Step 8: Insert the transaction into the correct INVENTORY SHARD ---
                 trans_result = transactions_coll.insert_one(transaction_doc, session=session)
 
-                # --- Step 9: Update permanent member loyalty in central Shopmember ---
-                if member_id and db_member: # Check if db_member connection is valid
-                    points_earned = int(final_total)
+                # --- Step 9: Update member loyalty in CENTRAL 'Shopmember' DB ---
+                # --- THIS IS THE KEY FIX FOR THE ERROR YOU ARE SEEING ---
+                if member_id and db_member is not None:
+                # --- END FIX ---
+                    points_earned = int(final_al)
                     db_member["loyalty"].update_one(
                         {"member_id": member_id},
                         {"$inc": {"points": points_earned}},
@@ -133,5 +147,4 @@ def record_sale(member_id, items_sold, discount_applied=0):
 
             except Exception as e:
                 print(f"Transaction aborted: {e}")
-                # Rollback happens automatically when exiting 'with' block on error
-                return None # Signal failure to GUI
+                return None

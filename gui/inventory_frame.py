@@ -10,7 +10,8 @@ class InventoryFrame(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent")
         self.sales_frame = sales_frame
 
-        self.grid_columnconfigure((0, 1), weight=1)
+        self.grid_columnconfigure(0, weight=1) 
+        self.grid_columnconfigure(1, weight=0) 
 
         self.label = ctk.CTkLabel(self, text="Inventory Management", font=ctk.CTkFont(size=18, weight="bold"))
         self.label.grid(row=0, column=0, columnspan=2, padx=20, pady=20)
@@ -24,7 +25,7 @@ class InventoryFrame(ctk.CTkFrame):
         self.price_entry.grid(row=3, column=0, padx=(20, 5), pady=5, sticky="ew")
         self.stock_entry = ctk.CTkEntry(self, placeholder_text="Initial Stock")
         self.stock_entry.grid(row=3, column=1, padx=(5, 20), pady=5, sticky="ew")
-        self.add_category_var = ctk.StringVar(value=CATEGORIES_LIST[0]) # Use var for add product
+        self.add_category_var = ctk.StringVar(value=CATEGORIES_LIST[0]) 
         self.category_menu = ctk.CTkOptionMenu(self, values=CATEGORIES_LIST, variable=self.add_category_var)
         self.category_menu.grid(row=4, column=0, padx=(20, 5), pady=5, sticky="ew")
         self.supplier_entry = ctk.CTkEntry(self, placeholder_text="Supplier/Brand")
@@ -34,13 +35,13 @@ class InventoryFrame(ctk.CTkFrame):
 
         # --- Add Stock Section ---
         self.add_stock_label = ctk.CTkLabel(self, text="Add Stock (Restock)", font=ctk.CTkFont(size=16))
-        self.add_stock_label.grid(row=6, column=0, columnspan=2, padx=20, pady=(20, 5), sticky="ew")
+        self.add_stock_label.grid(row=6, column=0, padx=20, pady=(20, 5), sticky="w") 
 
         entry_width = 200
         self.stock_name_entry = ctk.CTkEntry(self, placeholder_text="Product Name", width=entry_width)
-        self.stock_name_entry.grid(row=7, column=0, padx=20, pady=5, sticky="w")
+        self.stock_name_entry.grid(row=7, column=0, padx=20, pady=5, sticky="w") 
         self.stock_supplier_entry = ctk.CTkEntry(self, placeholder_text="Supplier/Brand", width=entry_width)
-        self.stock_supplier_entry.grid(row=8, column=0, padx=20, pady=5, sticky="w")
+        self.stock_supplier_entry.grid(row=8, column=0, padx=20, pady=5, sticky="w") 
 
         # --- NEW: Category dropdown for Add Stock ---
         self.stock_category_var = ctk.StringVar(value=CATEGORIES_LIST[0]) # Separate var for restock
@@ -49,9 +50,9 @@ class InventoryFrame(ctk.CTkFrame):
         # --- END NEW ---
 
         self.stock_amount_entry = ctk.CTkEntry(self, placeholder_text="Amount to Add", width=entry_width)
-        self.stock_amount_entry.grid(row=10, column=0, padx=20, pady=10, sticky="w")
+        self.stock_amount_entry.grid(row=10, column=0, padx=20, pady=10, sticky="w") 
         self.add_stock_button = ctk.CTkButton(self, text="Add", width=80, command=self.add_stock_callback)
-        self.add_stock_button.grid(row=11, column=0, padx=20, pady=10, sticky="w")
+        self.add_stock_button.grid(row=11, column=0, padx=20, pady=10, sticky="w") 
 
         self.status_label = ctk.CTkLabel(self, text="", text_color="green")
         self.status_label.grid(row=12, column=0, columnspan=2, padx=20, pady=15)
@@ -96,7 +97,6 @@ class InventoryFrame(ctk.CTkFrame):
         except Exception as e:
             self.status_label.configure(text=f"Error adding product: {e}", text_color="red")
 
-    # --- MODIFIED: Pass category ---
     def add_stock_callback(self):
         product_name = self.stock_name_entry.get()
         supplier_name = self.stock_supplier_entry.get()
