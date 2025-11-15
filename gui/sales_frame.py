@@ -1,33 +1,31 @@
 import customtkinter as ctk
 from database import sales_db, inventory_db, member_db
 
-# Use the hash map keys for consistency + "All Categories"
 CATEGORIES = ["All Categories"] + list(inventory_db.CATEGORY_HASH.keys())
 
 class SalesFrame(ctk.CTkFrame):
     def __init__(self, master):
         super().__init__(master, fg_color="transparent")
         self.cart = []
-        self.member_found = None
+        self.member_found = None # This will now store the {'doc':..., 'shard_id':...} dict
         self.DISCOUNT_THRESHOLD = 1000
         self.DISCOUNT_PERCENT = 0.05
+        
+        # --- Layout (Unchanged) ---
         self.grid_columnconfigure(0, weight=1, minsize=180)
         self.grid_columnconfigure(1, weight=5)
         self.grid_columnconfigure(2, weight=2, minsize=230)
         self.grid_rowconfigure(1, weight=1)
-
         # --- Column 0: FILTERS ---
         self.filter_frame = ctk.CTkFrame(self)
         self.filter_frame.grid(row=0, column=0, rowspan=2, padx=(20, 10), pady=20, sticky="nsew")
-        self.filter_frame.grid_rowconfigure(7, weight=1) # Add row for brand
+        self.filter_frame.grid_rowconfigure(7, weight=1) 
         self.filter_label = ctk.CTkLabel(self.filter_frame, text="Filter Products", font=ctk.CTkFont(size=16, weight="bold"))
         self.filter_label.grid(row=0, column=0, padx=15, pady=15, sticky="ew")
         self.name_entry = ctk.CTkEntry(self.filter_frame, placeholder_text="Search by Name")
         self.name_entry.grid(row=1, column=0, padx=15, pady=10, sticky="ew")
-        # --- NEW: Brand Filter ---
         self.brand_entry = ctk.CTkEntry(self.filter_frame, placeholder_text="Search by Brand/Supplier")
         self.brand_entry.grid(row=2, column=0, padx=15, pady=10, sticky="ew")
-        # --- END NEW ---
         self.category_label = ctk.CTkLabel(self.filter_frame, text="Category:")
         self.category_label.grid(row=3, column=0, padx=15, pady=(10, 0), sticky="w")
         self.category_var = ctk.StringVar(value=CATEGORIES[0])
@@ -38,8 +36,7 @@ class SalesFrame(ctk.CTkFrame):
         self.max_price_entry = ctk.CTkEntry(self.filter_frame, placeholder_text="Max Price")
         self.max_price_entry.grid(row=6, column=0, padx=15, pady=10, sticky="ew")
         self.filter_button = ctk.CTkButton(self.filter_frame, text="Find Products", command=self.apply_filters_callback)
-        self.filter_button.grid(row=7, column=0, padx=15, pady=15) # Moved button down
-
+        self.filter_button.grid(row=7, column=0, padx=15, pady=15) 
         # --- Column 1: PRODUCT LIST ---
         self.product_frame = ctk.CTkFrame(self)
         self.product_frame.grid(row=0, column=1, rowspan=2, padx=10, pady=20, sticky="nsew")
@@ -63,7 +60,6 @@ class SalesFrame(ctk.CTkFrame):
         self.product_list_frame = ctk.CTkScrollableFrame(self.product_frame, fg_color="transparent", corner_radius=0)
         self.product_list_frame.grid(row=2, column=0, columnspan=2, padx=0, pady=0, sticky="nsew")
         self.product_list_frame.grid_columnconfigure(0, weight=1)
-
         # --- Column 2: CART & SALE ---
         self.cart_frame = ctk.CTkFrame(self)
         self.cart_frame.grid(row=0, column=2, rowspan=2, padx=(10, 20), pady=20, sticky="nsew")
@@ -87,24 +83,21 @@ class SalesFrame(ctk.CTkFrame):
         self.clear_sale_button.grid(row=5, column=1, padx=(5, 15), pady=15, sticky="ew")
         self.status_label = ctk.CTkLabel(self.cart_frame, text="", text_color="green")
         self.status_label.grid(row=6, column=0, columnspan=2, padx=15, pady=5)
-
+        
         self.apply_filters_callback()
 
     def apply_filters_callback(self):
+        # (Unchanged)
         for widget in self.product_list_frame.winfo_children():
             widget.destroy()
-
         filters = {}
         name = self.name_entry.get()
         if name: filters["name"] = name
-        
         brand = self.brand_entry.get()
         if brand: filters["brand"] = brand
-        
         category = self.category_var.get()
         if category and category != "All Categories":
             filters["category"] = category
-            
         try:
             min_price = self.min_price_entry.get()
             if min_price: filters["min_price"] = float(min_price)
@@ -115,12 +108,9 @@ class SalesFrame(ctk.CTkFrame):
             return
         else:
             self.status_label.configure(text="")
-
-        products = inventory_db.create_product_fragment(filters) # Pass brand filter
-
+        products = inventory_db.create_product_fragment(filters) 
         if not products:
             ctk.CTkLabel(self.product_list_frame, text="No products match filters.").grid(row=0, column=0, padx=10, pady=10)
-
         for i, product in enumerate(products):
             brand_display = product.get("supplier_name", "N/A")
             prod_frame = ctk.CTkFrame(self.product_list_frame, corner_radius=0, fg_color=("gray90", "gray10") if i % 2 == 0 else "transparent")
@@ -140,33 +130,38 @@ class SalesFrame(ctk.CTkFrame):
             ).grid(row=0, column=4, padx=(5, 10), pady=5)
 
     def check_member_callback(self):
+        # (Unchanged)
         phone = self.member_phone_entry.get()
         if not phone:
              self.status_label.configure(text="Enter phone.", text_color="red"); return
-        member = member_db.find_member_by_phone(phone)
-        self.member_found = member
-        status_text = f"Member: {member['name']}" if member else "No member found."
-        status_color = "green" if member else "red"
+        
+        member_info = member_db.find_member_by_phone(phone)
+        self.member_found = member_info
+        
+        if member_info:
+            status_text = f"Member: {member_info['doc']['name']}"
+            status_color = "green"
+        else:
+            status_text = "No member found."
+            status_color = "red"
+            
         self.status_label.configure(text=status_text, text_color=status_color)
         self.update_cart_ui()
 
-
     def add_to_cart_callback(self, product):
+        # (Unchanged)
         product_id_str = str(product["_id"])
-        shard_id = product["shard_id"] # Get shard_id from fragment
-
+        shard_id = product["shard_id"] 
         for item in self.cart:
             if item["product_id"] == product_id_str:
                 item["quantity"] += 1
                 self.update_cart_ui()
                 return
-
         brand_name = product.get("supplier_name", "N/A")
         display_name = f"{product['name']} ({brand_name})"
-
         cart_item = {
             "product_id": product_id_str,
-            "shard_id": shard_id, # Store shard_id
+            "shard_id": shard_id,
             "name": display_name,
             "price": product["price"],
             "quantity": 1
@@ -174,40 +169,59 @@ class SalesFrame(ctk.CTkFrame):
         self.cart.append(cart_item)
         self.update_cart_ui()
 
+    # --- THIS FUNCTION IS THE FIX ---
     def update_cart_ui(self):
         for widget in self.cart_list_frame.winfo_children(): widget.destroy()
         subtotal = 0
         if not self.cart: ctk.CTkLabel(self.cart_list_frame, text="Cart is empty.").pack()
+        
         for item in self.cart:
             item_total = item["price"] * item["quantity"]
             subtotal += item_total
             item_text = f"{item['name']} (x{item['quantity']}) - {item_total:.2f} BDT"
             ctk.CTkLabel(self.cart_list_frame, text=item_text).pack(anchor="w", padx=10)
-        discount = 0; final_total = subtotal
+        
+        discount = 0
+        final_total = subtotal
+        
+        # This is the logic block that fixes your issue
         if self.member_found and subtotal >= self.DISCOUNT_THRESHOLD:
+            # Case 1: Member found AND total is high enough
             discount = subtotal * self.DISCOUNT_PERCENT
             final_total = subtotal - discount
             self.discount_label.configure(text=f"Discount (5%): -{discount:.2f} BDT", text_color="#1F6AA5")
         else:
+            # Case 2: EITHER no member OR total is too low
             discount_needed = self.DISCOUNT_THRESHOLD - subtotal
+            
+            # This line checks if a member is found AND if they still need to spend more
             discount_text = f"Spend {discount_needed:.2f} BDT more for 5% off" if self.member_found and discount_needed > 0 else "No discount applied."
+            
             self.discount_label.configure(text=discount_text, text_color="gray")
+        
         self.total_label.configure(text=f"Total: {final_total:.2f} BDT")
+    # --- END OF FIX ---
 
     def process_sale_callback(self):
+        # (Unchanged)
         self.status_label.configure(text="Processing...", text_color="orange"); self.update_idletasks()
-        member_id = self.member_found["_id"] if self.member_found else None
+        
+        member_info_for_backend = self.member_found 
+        
         if not self.cart: self.status_label.configure(text="Cart empty.", text_color="red"); return
+        
         subtotal = sum(item["price"] * item["quantity"] for item in self.cart)
         discount_applied = 0
-        if self.member_found and subtotal >= self.DISCOUNT_THRESHOLD: discount_applied = subtotal * self.DISCOUNT_PERCENT
+        if self.member_found and subtotal >= self.DISCOUNT_THRESHOLD: 
+            discount_applied = subtotal * self.DISCOUNT_PERCENT
 
         items_sold_db = [
-            {"product_id": item["product_id"], "quantity": item["quantity"], "shard_id": item["shard_id"]} # Pass shard_id
+            {"product_id": item["product_id"], "quantity": item["quantity"], "shard_id": item["shard_id"]} 
             for item in self.cart
         ]
         try:
-            transaction_id = sales_db.record_sale(member_id, items_sold_db, discount_applied)
+            transaction_id = sales_db.record_sale(member_info_for_backend, items_sold_db, discount_applied)
+            
             if transaction_id:
                 self.status_label.configure(text=f"Sale complete!", text_color="green"); self.clear_sale()
             else:
@@ -216,6 +230,7 @@ class SalesFrame(ctk.CTkFrame):
             self.status_label.configure(text=f"Error: {e}", text_color="red")
 
     def clear_sale(self):
+        # (Unchanged)
         self.cart = []; self.member_found = None
         self.member_phone_entry.delete(0, "end")
         self.status_label.configure(text="Sale cleared.", text_color="gray")
