@@ -1,5 +1,9 @@
 import customtkinter as ctk
 from database import member_db
+import re # <-- Import the regex module
+
+# --- Define a simple pattern for email validation ---
+EMAIL_REGEX = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 class MemberFrame(ctk.CTkFrame):
     def __init__(self, master):
@@ -16,10 +20,9 @@ class MemberFrame(ctk.CTkFrame):
         self.phone_entry = ctk.CTkEntry(self, placeholder_text="Phone Number")
         self.phone_entry.grid(row=2, column=0, padx=20, pady=5, sticky="ew")
 
-        # --- NEW: Email field is required for sharding ---
+        # --- Email field is required for sharding ---
         self.email_entry = ctk.CTkEntry(self, placeholder_text="Email (e.g., user@gmail.com)")
         self.email_entry.grid(row=3, column=0, padx=20, pady=5, sticky="ew")
-        # --- END NEW ---
 
         self.add_button = ctk.CTkButton(self, text="Add Member", command=self.add_member_callback)
         self.add_button.grid(row=4, column=0, padx=20, pady=10)
@@ -30,14 +33,19 @@ class MemberFrame(ctk.CTkFrame):
     def add_member_callback(self):
         name = self.name_entry.get()
         phone = self.phone_entry.get()
-        email = self.email_entry.get() # Get the new email
+        email = self.email_entry.get() 
 
         if not name or not phone or not email:
             self.status_label.configure(text="Name, Phone, and Email are required.", text_color="red")
             return
             
+        # --- Email Validation Check ---
+        if not re.match(EMAIL_REGEX, email):
+            self.status_label.configure(text="Invalid email format (e.g., user@domain.com)", text_color="red")
+            return
+        # --- End Validation ---
+            
         try:
-            # Pass all three fields to the backend
             member_id = member_db.add_member(name, phone, email)
             if member_id:
                 self.status_label.configure(text=f"Success! Added member '{name}'", text_color="green")
@@ -45,7 +53,6 @@ class MemberFrame(ctk.CTkFrame):
                 self.phone_entry.delete(0, "end")
                 self.email_entry.delete(0, "end")
             else:
-                # This now checks for duplicates on the specific shard
                 self.status_label.configure(text="Error: Phone number or Email already exists on its shard.", text_color="red")
         except Exception as e:
             self.status_label.configure(text=f"Error: {e}", text_color="red")
